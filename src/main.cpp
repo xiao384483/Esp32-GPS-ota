@@ -6,7 +6,13 @@
 #include<WiFiUdp.h>
 #include <SoftwareSerial.h>
 #include <TinyGPSPlus.h>
+#include<BLEDevice.h>
+#include<BLEService.h>
+//#include<BLEUtils.h>
+#include<BLE2902.h>
+#include<queue>
 
+const float version = 5.11;//请及时更新版本号
 #define OLED_SDA 19
 #define OLED_SCL 18
 SH1106Wire display(0x3c, OLED_SDA, OLED_SCL); // 创建OLED显示对象
@@ -23,8 +29,65 @@ SoftwareSerial ss(RXPin, TXPin);
 const char *ssid = "Redmi_E57E";
 const char *password = "88889999";
 
+BLEServer *pServer;
+BLECharacteristic *pCharacteristicRX;
+BLECharacteristic *pCharacteristicTX;
+//std::queue<String> commandQueue;
+//蓝牙设置
+#define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_RX_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define CHARACTERISTIC_TX_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
 
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+class MyServerCallbacks:public BLEServerCallbacks{
+  void onConnect(BLEServer*pServer){
+    deviceConnected = true;
+    display.clear();
+    display.drawString(70, 0, "on");
+    display.display();
+    // 在设备连接时触发
+  }
+  void onDisconnect(BLEServer*pServer){
+    deviceConnected = false;
+    display.clear();
+    display.drawString(70, 0, "off");
+    display.display();
+    // 在设备断开时触发
+  }
+};
+//BLE输入不同类型字符对应的输出
+class MyCallbacks:public BLECharacteristicCallbacks{
+  void onWrite(BLECharacteristic*pCharacteristic){
+    std::string rxValue = pCharacteristic->getValue();
+   if (!rxValue.empty()) {
+  String receivedString = String(rxValue.c_str());
+  //commandQueue.push(receivedString);
+  // display.clear();
+  // display.drawString(0, 20, receivedString);
+  }
+  }
+};
+
+//BLE初始化
+void setupBLE(){
+BLEDevice::init("esp32c3");
+  pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  pCharacteristicRX = pService->createCharacteristic(CHARACTERISTIC_RX_UUID, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_INDICATE);
+
+  pCharacteristicRX->setCallbacks((new MyCallbacks()));
+
+  pCharacteristicTX = pService->createCharacteristic(CHARACTERISTIC_TX_UUID, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_INDICATE);
+  pCharacteristicTX->addDescriptor(new BLE2902());
+  pService->start();
+  BLEAdvertising *pAdvertising = pServer->getAdvertising();
+  pAdvertising->start();
+  Serial.println("blurtooth device active,waiting for connections...");
+ }
 void setupOTA(){
       ArduinoOTA
       .onStart([]()
@@ -55,20 +118,24 @@ void setupOTA(){
 void setup() {
   Serial.begin(9600);
   ss.begin(GPSBaud);
-  pinMode(gpioPin, OUTPUT);
-  digitalWrite(gpioPin, HIGH);
-
-WiFi.begin(ssid, password);//初始化至STA模式，需要预先输入wifi名称密码
+  WiFi.begin(ssid, password);//初始化至STA模式，需要预先输入wifi名称密码
 while (WiFi.status()!=WL_CONNECTED)
    {
     delay(1000);
     Serial.println("Connecting to wifi...");
   }
-  setupOTA();
+  pinMode(gpioPin, OUTPUT);
+  digitalWrite(gpioPin, HIGH);
+
+
   display.init();
   display.flipScreenVertically();
   display.setFont(ArialMT_Plain_10);
-  display.clear();
+
+  setupBLE();
+  //setupOTA();
+
+
 
   
   
@@ -134,8 +201,8 @@ void displayInfo()
   Serial.println();
 }
 void loop() {
-   ArduinoOTA.handle();
-   display.drawString(0, 0, "version-demo2.6");
+  // ArduinoOTA.handle();
+   display.drawString(0, 0, "version: "+String(version));//版本号
    display.display();
    // This sketch displays information every time a new sentence is correctly encoded.
    while (ss.available() > 0)
