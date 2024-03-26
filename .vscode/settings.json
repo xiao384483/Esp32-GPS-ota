@@ -53,6 +53,9 @@
         "thread": "cpp",
         "cinttypes": "cpp",
         "typeinfo": "cpp",
-        "regex": "cpp"
-    }
+        "regex": "cpp",
+        "bitset": "cpp",
+        "iostream": "cpp"
+    },
+    "cmake.sourceDirectory": "F:/vscode-code/git/Esp32-GPS-ota/.pio/libdeps/airm2m_core_esp32c3/ESP8266 and ESP32 OLED driver for SSD1306 displays"
 }
