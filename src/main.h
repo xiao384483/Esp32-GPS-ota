@@ -26,6 +26,13 @@ static const uint32_t GPSBaud = 9600;//GPS默认9600
 const int gpioPin13 = 13;//gps归零引脚，拉低可关闭GPS
 TinyGPSPlus gps;
 SoftwareSerial ss(GPSRXPin, GPSTXPin);
+double latitudeCircle = 0; // 获取经度
+double longitudeCircle =0; // 获取纬度 
+int CircleCount=0;
+double origin_x=0;
+double origin_y=0;
+double NowCircle_x = 0;
+double NowCircle_y = 0;
 //wifi设置
 // const char *ssid = "Redmi_E57E";
 // const char *password = "88889999";
@@ -58,3 +65,5 @@ SimpleKalmanFilter degFilter(2, 100, 1);
 // const float lngProcessNoise = 0.001;   // GPS经度过程噪声
 // const float latEstimateError = 0.1;     // GPS纬度估计误差
 // const float lngEstimateError = 0.1;     // GPS经度估计误差
+unsigned long lastMethod1Time = 0;
+unsigned long lastMethod2Time = 0;

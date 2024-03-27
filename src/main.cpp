@@ -15,8 +15,10 @@ const float version = 3.3;//请及时更新版本号
 5.打印连接设备数以及连接状态，还有完成指令的时间
 6.连接成功，断开以后重新广播，方便重连
 7.实时检测两个航向角，使用PID调节后输出一个角度信号。目前Pid被注释了。后续再用
-8.锚定模式：
+8.锚定模式：发送archor指令给ble，接下来30s内计算经纬度平均值，作为原点。完成后开始每十秒计算一次平均值距离圆心的距离，如果在3m外需要调整，否则不动
 9.目前对航向角做了卡尔曼滤波，三个滤波参数是2，100，1，暂定，2指GPS精度误差，100一直在随系统改变，1指系统噪音，需要根据实际来调节。
+10.目前每10s更新一次GPS经纬度的平均值，用NowCircle_x,NowCircle_y代替平均经纬度。
+
 */
 unsigned long delayTime;
 unsigned long StartTime;
@@ -34,6 +36,8 @@ bool oldDeviceConnected = false;
 bool safeLock = false;
 bool wait = false;
 bool deeg = false;
+bool anchorkey = false;
+bool archorDis = false;
 int connectionCount = 0;
 // struct PolarCoordinate {
 //     double direction; // 航向角
@@ -76,13 +80,20 @@ class MyServerCallbacks:public BLEServerCallbacks{
 };
 //BLE输入不同类型字符对应的输出
 class MyCallbacks:public BLECharacteristicCallbacks{
-  void onWrite(BLECharacteristic*pCharacteristic){
+  void onWrite(BLECharacteristic*pCharacteristic){//同步写入，实时处理，占用内存会多一些
     std::string rxValue = pCharacteristic->getValue();
    if (!rxValue.empty()) {
   String receivedString = String(rxValue.c_str());
   commandQueue.push(receivedString);
   }
   }
+void onWrite_nr(BLECharacteristic*pCharacteristic){//异步写入，后台处理，会有延迟，一般影响不大，但不排除有情况导致高延迟
+  std::string rxValue = pCharacteristic->getValue();
+   if (!rxValue.empty()) {
+  String receivedString = String(rxValue.c_str());
+  commandQueue.push(receivedString);
+  }
+}
 };
 // sport:后跟前，后，左，右四个指令
 void sport(String value) {
@@ -100,11 +111,11 @@ void speed(String value) {
     display.clear();
     display.drawRect(0, 40, 60, 10);
     display.fillRect(0, 42, (60 * num/ 100), 8);
-    EndTime = millis();
-    delayTime = EndTime - StartTime;
     pCharacteristicTX->setValue("speed:");
     pCharacteristicTX->notify();
     wait = false;
+    EndTime = millis();
+    delayTime = EndTime - StartTime;
 }
 void safelock(String value){
   if (value=="on")
@@ -115,6 +126,7 @@ void safelock(String value){
     safeLock = false;
     display.clear();
   }
+  wait = false;
 }
 void GPS(String value){
   if (value=="off")
@@ -123,6 +135,7 @@ void GPS(String value){
   }else{digitalWrite(gpioPin13, HIGH);}//拉高13号引脚，GPS可以正常工作
   wait = false;
   EndTime = millis();
+  wait = false;
   delayTime = EndTime - StartTime;
 }
 void Navigation(String value){
@@ -138,17 +151,6 @@ void Navigation(String value){
       Serial.println(y,6);
       latti.push(x);
       longgi.push(y);
-
-
-      //   Point p;
-      //   p.x = x;
-      //   p.y = y;
-      // // 将 Point 对象添加到队列中
-      //   points.push(p);
-      // x = distanceBetween(pointA, pointB);
-      // Point p = {x, y};
-      // std::queue<Point> points;
-      // points.push(p);
     }
     // std::queue<Point> copyQueue = points;
     EndTime = millis();
@@ -210,7 +212,7 @@ void StartNav(){//计算两个航向角以及距离，同时如果距离在五�
   display.drawString(90, 54, String(distance_m));
   display.drawString(50, 54, String(courseTo));
   PID(Input);
-  while (distance_m<5)
+  while (distance_m<5)//如果队列为空，那快接近目的地的时候需要减速，这里需要引入电机的控制。
   {
     latti.pop();
     longgi.pop();
@@ -218,6 +220,60 @@ void StartNav(){//计算两个航向角以及距离，同时如果距离在五�
     break;  
   }
   }
+  void Circle(){
+  // for (int i = 0; i < 10; i++){
+  latitudeCircle += gps.location.lat();
+  longitudeCircle += gps.location.lng();
+  CircleCount++;
+  while (CircleCount==9)
+  {
+    NowCircle_x = latitudeCircle / 10;
+    NowCircle_y = longitudeCircle / 10;
+    CircleCount = 0;
+    break;
+  }
+  // display.drawString(60, 18, String((latitudeCircle / 10),6));
+  // display.drawString(60, 36, String((longitudeCircle / 10),6));
+  // display.display();
+ }  
+  void anchor(String value){
+  if(value=="origin"){
+  double latitude1=0; // 获取经度
+  double longitude1=0; // 获取纬度
+  for (int i = 0; i < 30; i++) {
+    anchorkey = false;
+    archorDis = true;
+    display.clear();
+    display.drawString(0, 36, "Please wait "+String(30-i)+" s.");
+    display.display();
+    latitude1 += gps.location.lat();
+    longitude1 += gps.location.lng();
+    Serial.println(gps.location.lat(), 6);
+    Serial.println(gps.location.lng(), 6);
+    delay(1000);
+  while (i==29)
+    {
+      display.drawString(0, 18, String((latitude1 / 30),6));
+      display.drawString(0, 36, String((longitude1 / 30),6));
+      display.display();
+      origin_x = latitude1 / 30;
+      origin_y = longitude1 / 30;
+      longitude1 = latitude1 = 0;
+      anchorkey = true;
+      archorDis = true;
+      break;}  }
+     }
+  }
+void archorDistance(){
+  double ArchorDistance=gps.distanceBetween(origin_x, origin_y, NowCircle_x, NowCircle_y);
+  if(ArchorDistance>=5)
+  {
+    //调节船外机的代码
+  }else{
+    Serial.println("Archoring.");
+  }
+}
+
 //析接收到的指令并执行相应操作
 std::regex commandPattern("([^;:]+):([^:;]+)");
 void parseAndExecuteCommand(String command) {
@@ -240,87 +296,34 @@ void parseAndExecuteCommand(String command) {
         safelock(value);
       } else if (key == "GPS") {
         GPS(value);
+      }else if(key=="anchor"){
+        anchor(value);
       }else if (key == "Nav") {//输入需要导航的点ABCDEF
          Navigation(value);
       }else if (key == "StartNav") {//开始导航，计算到第一个点的距离
         StartCount += 1;
-        Serial.println("Startcount = 1");
-      }else if(key=="collect"){
-        if(value=="30"){
-          // Serial.print("Startcount = ");
-          // Serial.println(StartCount);
-    // 收集接下来100个经纬度数据
-          display.drawString(0, 36, "Wait 30s");
-          display.display();
-          double latitude1=0; // 获取经度
-          double longitude1=0; // 获取纬度
-         for (int i = 0; i < 30; i++) {
-          latitude1 += gps.location.lat();
-          longitude1 += gps.location.lng();
-          delay(1000);
-          while (i==29)
-          {
-            display.drawString(0, 18, String((latitude1 / 100),6));
-            display.drawString(0, 36, String((longitude1 / 100),6));
-            display.display();
-            break;
-          }  
-          }
-        }
-        if(value=="10"){
-          // Serial.print("Startcount = ");
-          // Serial.println(StartCount);
-    // 收集接下来12个经纬度数据
-          double latitude2 = 0; // 获取经度
-          double longitude2 =0; // 获取纬度 
-         for (int i = 0; i < 6; i++){
-      
-          latitude2 += gps.location.lat();
-          longitude2 += gps.location.lng();
-          delay(1000);
-          while (i==5)
-          {
-            display.drawString(60, 18, String((latitude2 / 12),6));
-            display.drawString(60, 36, String((longitude2 / 12),6));
-            display.display();
-            break;
-          }  
-          }  
-        }
-      }else if (value=="clear")
-        {
-          StartCount = 0;
-          Serial.println("Startcount has been cleared");
-          display.clear();
-        }
+        //Serial.println("Startcount = 1");
       }else {
         display.drawString(0, 54, "Undefined");
       }
     }
   } 
-
-
-// 
-
+}
 //BLE初始化
 void setupBLE(){
 BLEDevice::init("RG-Pulse");
 pServer = BLEDevice::createServer();
 pServer->setCallbacks(new MyServerCallbacks());
-
 BLEService *pService = pServer->createService(SERVICE_UUID);
-
-pCharacteristicRX = pService->createCharacteristic(CHARACTERISTIC_RX_UUID, BLECharacteristic::PROPERTY_WRITE|BLECharacteristic::PROPERTY_READ|BLECharacteristic::PROPERTY_NOTIFY|BLECharacteristic::PROPERTY_INDICATE);
+pCharacteristicRX = pService->createCharacteristic(CHARACTERISTIC_RX_UUID,  BLECharacteristic::PROPERTY_WRITE_NR|BLECharacteristic::PROPERTY_WRITE|BLECharacteristic::PROPERTY_NOTIFY|BLECharacteristic::PROPERTY_INDICATE);
 
 pCharacteristicRX->setCallbacks((new MyCallbacks()));
-
-pCharacteristicTX = pService->createCharacteristic(CHARACTERISTIC_TX_UUID, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_INDICATE);
+pCharacteristicTX = pService->createCharacteristic(CHARACTERISTIC_TX_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_INDICATE);
 pCharacteristicTX->addDescriptor(new BLE2902());
 pService->start();
 BLEAdvertising *pAdvertising = pServer->getAdvertising();
 pAdvertising->start();
 //Serial.println("blurtooth device active,waiting for connections...");
-
 }
 
 //  void setupOTA(){
@@ -349,15 +352,11 @@ pAdvertising->start();
 //   Serial.print("IP address: ");
 //   Serial.println(WiFi.localIP());
 // }
-
 void setup() {
-
   Serial.begin(921600);
   ss.begin(GPSBaud);
    pinMode(gpioPin13, OUTPUT);//13号引脚设置为输出
    digitalWrite(gpioPin13,HIGH);
- 
-
 //WiFi.begin(ssid, password);//初始化至STA模式，需要预先输入wifi名称密码
 // while (WiFi.status()!=WL_CONNECTED)
 //    {
@@ -375,7 +374,6 @@ void setup() {
     Error1[0] = 0;}
 //GPS信息传输
 // 
-
 void displayInfo()
 {
   Serial.print(F("Location: ")); 
@@ -423,22 +421,33 @@ void displayInfo()
   {
     Serial.print(F("INVALID"));
   }
-
   Serial.println();
 }
-
 void loop() {
   // ArduinoOTA.handle();
   display.clear();
   StartTime = millis();
   display.drawString(0, 0, "version: " + String(version)); // 版本号
-
+//检查蓝牙连接状态
   if (deviceConnected)
   {
     display.drawString(70, 0, "on"+String(connectionCount));
    }else{
      display.drawString(70, 0, "off"+String(connectionCount));
    }
+//检查蓝牙指令
+  if (!commandQueue.empty()) {
+      //检测蓝牙是否占用
+    if (wait)
+   {
+     delay(1000);
+     wait = false;
+   }
+     String command = commandQueue.front();
+     commandQueue.pop();
+     parseAndExecuteCommand(command); // 解析并执行蓝牙指令
+   }
+//检查安全锁状态（锁定运动指令）
    if (safeLock)
    {
      display.drawString(90, 0, "safe");
@@ -452,6 +461,7 @@ void loop() {
 //     oldDeviceConnected = deviceConnected;
 //   }
    //This sketch displays information every time a new sentence is correctly encoded.
+   //开始GPS的检测
    while (ss.available() > 0)
      {if (gps.encode(ss.read()))
        {displayInfo();}
@@ -463,11 +473,6 @@ void loop() {
      Serial.println(F("No GPS detected: check wiring."));
      while (true);
   }
-  if (wait)
-   {
-     delay(1000);
-     wait = false;
-   }
    int updatecount=0;
    if(gps.location.isValid()){
      delay(1000);
@@ -477,13 +482,17 @@ void loop() {
    }else{
      display.drawString(0, 54, "false");
    }
-   if (!commandQueue.empty()&&!wait) {
-     String command = commandQueue.front();
-     commandQueue.pop();
-     parseAndExecuteCommand(command); // 解析并执行蓝牙指令
-   }
+unsigned long currentTime = millis();
 
-  
+  if (currentTime - lastMethod1Time >= 1000) {
+    Circle();
+    lastMethod1Time = currentTime;
+  }
+  // Execute method 2 every ten seconds
+  if (currentTime - lastMethod2Time >= 10000) {
+    if (archorDis){archorDistance();}
+    lastMethod2Time = currentTime;
+  }
 //  if (StartCount==1)
 //  {
 //   if(!latti.empty()&&!longgi.empty()){
