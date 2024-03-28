@@ -28,7 +28,7 @@ TinyGPSPlus gps;
 SoftwareSerial ss(GPSRXPin, GPSTXPin);
 double latitudeCircle = 0; // 获取经度
 double longitudeCircle =0; // 获取纬度 
-int CircleCount=0;
+
 double origin_x=0;
 double origin_y=0;
 double NowCircle_x = 0;
@@ -37,7 +37,7 @@ double NowCircle_y = 0;
 // const char *ssid = "Redmi_E57E";
 // const char *password = "88889999";
 //蓝牙设置
- #define SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+ #define SERVICE_UUID "66668888-0000-1111-0000-c5c9c331914b"
  #define CHARACTERISTIC_RX_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
  #define CHARACTERISTIC_TX_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
@@ -51,7 +51,7 @@ float Error=0,dt=0.1;//采样时间dt
 float Dbuf[3];
 float Error1[3];
 
-int StartCount = 0;
+
 
 // 定义Kalman滤波器
 //有没有对经纬度滤波的需求？？？或者使用计算平均值的方法即可？
@@ -67,3 +67,27 @@ SimpleKalmanFilter degFilter(2, 100, 1);
 // const float lngEstimateError = 0.1;     // GPS经度估计误差
 unsigned long lastMethod1Time = 0;
 unsigned long lastMethod2Time = 0;
+unsigned long lastMethod3Time = 0;
+double AnchorDistance = 0;
+// const double EARTH_RADIUS = 6371000.0;//定义地球半径
+// // 将角度转换为弧度
+// double toRadians(double degree) {
+//     return degree * M_PI / 180.0;
+// }
+// // 计算两个坐标点之间的直线距离（单位：米）
+// double calculateDistance(double lat1, double lon1, double lat2, double lon2) {
+//     // 将经纬度转换为弧度
+//     double radLat1 = toRadians(lat1);
+//     double radLon1 = toRadians(lon1);
+//     double radLat2 = toRadians(lat2);
+//     double radLon2 = toRadians(lon2);
+
+//     // 计算经度和纬度的差值
+//     double deltaLat = radLat2 - radLat1;
+//     double deltaLon = radLon2 - radLon1;
+
+//     // 使用直线距离公式计算距离
+//     double distance = 2 * asin(sqrt(pow(sin(deltaLat / 2), 2) + cos(radLat1) * cos(radLat2) * pow(sin(deltaLon / 2), 2))) * EARTH_RADIUS;
+
+//     return distance;
+// }

@@ -5,7 +5,7 @@
 #include<map>
 #include <iostream>
 #include <iomanip> 
-const float version = 3.3;//请及时更新版本号
+const float version = 3.2;//请及时更新版本号
 /*目前实现的功能：
 
 1.使用WIFI进行OTA升级（但加入蓝牙后很容易冲突导致OTA失败，得再试试蓝牙OTA升级）
@@ -18,49 +18,34 @@ const float version = 3.3;//请及时更新版本号
 8.锚定模式：发送archor指令给ble，接下来30s内计算经纬度平均值，作为原点。完成后开始每十秒计算一次平均值距离圆心的距离，如果在3m外需要调整，否则不动
 9.目前对航向角做了卡尔曼滤波，三个滤波参数是2，100，1，暂定，2指GPS精度误差，100一直在随系统改变，1指系统噪音，需要根据实际来调节。
 10.目前每10s更新一次GPS经纬度的平均值，用NowCircle_x,NowCircle_y代替平均经纬度。
+11.经纬度之间计算方式使用Tinygps中的.betweenDistance(a,b,c,d)函数，a，c是纬度，b,d是经度
 
 */
 unsigned long delayTime;
 unsigned long StartTime;
 unsigned long EndTime;//这仨是为了计算延迟用
-BLEServer *pServer;
+BLEServer *pServer;//创建蓝牙服务器和特征对象
 BLECharacteristic *pCharacteristicRX;
 BLECharacteristic *pCharacteristicTX;
 std::queue<String> commandQueue;//该队列防止堵塞，波特率9600的话可以删掉，再往高可能比较有用
-std::queue<double> latti;
-std::queue<double> longgi;
-std::queue<float> NowDeg;
-std::queue<float> FilteredNowDeg;
-bool deviceConnected = false;
+std::queue<double> latti;//需要自主导航的点的纬度
+std::queue<double> longgi;//需要自主导航的点的经度
+std::queue<float> NowDeg;//存储原始航向角（测试哪个更准确用。）
+std::queue<float> FilteredNowDeg;//存储卡尔曼滤波后的航向角
+std::queue<double> CircleLat;//持续保留十个纬度数据的队列
+std::queue<double> CircleLng;//持续保留十个经度数据的队列
+std::queue<double> dataLatti;//记录一组GPS数据回来
+std::queue<double> dataLonggi;//记录一组GPS数据回来
+bool deviceConnected = false;//蓝牙连接状态
 bool oldDeviceConnected = false;
-bool safeLock = false;
+bool safeLock = false;//安全锁状态。ble发送"safelock:on"字符串可以打开。
 bool wait = false;
 bool deeg = false;
-bool anchorkey = false;
-bool archorDis = false;
+bool anchorkey = false;//锚点定位成功后置1
+//bool anchorDis = false;
+bool StartKey = false;
 int connectionCount = 0;
-// struct PolarCoordinate {
-//     double direction; // 航向角
-//     double distance;  // 距离
-// };
 
- // // 定义经纬度结构体
- // struct LatLng {
-//     double latitude;
-//     double longitude;
-// };
-
-// struct Point {
-//     double x;
-//     double y;
-// };
-// std::queue<Point> points;
-
-// LatLng Me = {Me_lati,Me_long};//当前定位的GPS位置
-// 定义三个点的经纬度坐标
-  // LatLng pointA = {22.688044, 114.064332};
-  // LatLng pointB = {22.689064, 114.067758};
-  // LatLng pointC = {22.689567, 114.072458};
 class MyServerCallbacks:public BLEServerCallbacks{
   void onConnect(BLEServer*pServer){
     deviceConnected = true;
@@ -140,7 +125,7 @@ void GPS(String value){
 }
 void Navigation(String value){
   float Nav1 = value.toFloat();
-    std::regex pattern(R"(([\d.]+),([\d.]+))");
+    std::regex pattern(R"(([\d.]+),([\d.]+))");//手机经纬度数据，中间用英文版逗号隔开
     std::smatch match;
     std::string valuer = value.c_str();
     if (std::regex_match(valuer, match, pattern)) {
@@ -205,9 +190,9 @@ void StartNav(){//计算两个航向角以及距离，同时如果距离在五�
   double m = latti.front();
   double n = longgi.front();
   double FilteredDeg = degFilter.updateEstimate(gps.course.deg());
-  display.drawString(0, 54, String(FilteredDeg));
+  //display.drawString(0, 54, String(FilteredDeg));
   double distance_m = gps.distanceBetween(gps.location.lat(), gps.location.lng(),m,n);
-  double courseTo =gps.courseTo(gps.location.lat(), gps.location.lng(),m,n);//是不是拿平均值的圆心来计算更合理？
+  double courseTo =gps.courseTo(NowCircle_x, NowCircle_y,m,n);//是拿平均值的圆心来计算的
   Input = FilteredDeg-courseTo;
   display.drawString(90, 54, String(distance_m));
   display.drawString(50, 54, String(courseTo));
@@ -220,29 +205,54 @@ void StartNav(){//计算两个航向角以及距离，同时如果距离在五�
     break;  
   }
   }
-  void Circle(){
-  // for (int i = 0; i < 10; i++){
-  latitudeCircle += gps.location.lat();
-  longitudeCircle += gps.location.lng();
-  CircleCount++;
-  while (CircleCount==9)
-  {
-    NowCircle_x = latitudeCircle / 10;
-    NowCircle_y = longitudeCircle / 10;
-    CircleCount = 0;
-    break;
-  }
+//       class MovingAverage {
+// private:
+//     std::queue<double> data;
+//     int maxSize;
+//     double sum;
+
+// public:
+//     MovingAverage(int size) : maxSize(size), sum(0) {}
+
+//     double next(double val) {
+//         if (data.size() >= maxSize) {
+//             sum -= data.front();  // 移除最老的元素的值
+//             data.pop();
+//         }
+//         data.push(val);  // 将新元素加入队列
+//         sum += val;      // 更新总和
+
+//         return static_cast<double>(sum) / data.size();  // 计算平均值
+//     }
+// };
+  void Circle(){//暂时用六个值的平均值来当作真实值，根据需求再调整
+    CircleLat.push(gps.location.lat());
+    CircleLng.push(gps.location.lng());
+    latitudeCircle += gps.location.lat();
+    longitudeCircle += gps.location.lng();
+    if (CircleLat.size()>6)
+    {
+      latitudeCircle -= CircleLat.front();
+      CircleLat.pop();
+      NowCircle_x = latitudeCircle / 6;
+    }
+    if (CircleLng.size()>6)
+    {
+      longitudeCircle -= CircleLng.front();
+      CircleLng.pop();
+      NowCircle_y = longitudeCircle / 6;
+    }
   // display.drawString(60, 18, String((latitudeCircle / 10),6));
   // display.drawString(60, 36, String((longitudeCircle / 10),6));
   // display.display();
  }  
   void anchor(String value){
-  if(value=="origin"){
+  if(value=="on"){
   double latitude1=0; // 获取经度
   double longitude1=0; // 获取纬度
   for (int i = 0; i < 30; i++) {
     anchorkey = false;
-    archorDis = true;
+    //anchorDis = true;
     display.clear();
     display.drawString(0, 36, "Please wait "+String(30-i)+" s.");
     display.display();
@@ -260,13 +270,18 @@ void StartNav(){//计算两个航向角以及距离，同时如果距离在五�
       origin_y = longitude1 / 30;
       longitude1 = latitude1 = 0;
       anchorkey = true;
-      archorDis = true;
+      //anchorDis = true;
       break;}  }
+     }else{//关闭在5m内调整
+    anchorkey = false;
      }
   }
-void archorDistance(){
-  double ArchorDistance=gps.distanceBetween(origin_x, origin_y, NowCircle_x, NowCircle_y);
-  if(ArchorDistance>=5)
+
+  
+
+void AnchorDis(){
+AnchorDistance=gps.distanceBetween(origin_x, origin_y, NowCircle_x, NowCircle_y);//到导航目的地
+  if(AnchorDistance>=5)
   {
     //调节船外机的代码
   }else{
@@ -301,8 +316,8 @@ void parseAndExecuteCommand(String command) {
       }else if (key == "Nav") {//输入需要导航的点ABCDEF
          Navigation(value);
       }else if (key == "StartNav") {//开始导航，计算到第一个点的距离
-        StartCount += 1;
-        //Serial.println("Startcount = 1");
+        StartKey = true;
+      //Serial.println("Startcount = 1");
       }else {
         display.drawString(0, 54, "Undefined");
       }
@@ -322,6 +337,7 @@ pCharacteristicTX = pService->createCharacteristic(CHARACTERISTIC_TX_UUID, BLECh
 pCharacteristicTX->addDescriptor(new BLE2902());
 pService->start();
 BLEAdvertising *pAdvertising = pServer->getAdvertising();
+pAdvertising->addServiceUUID(SERVICE_UUID);
 pAdvertising->start();
 //Serial.println("blurtooth device active,waiting for connections...");
 }
@@ -428,6 +444,7 @@ void loop() {
   display.clear();
   StartTime = millis();
   display.drawString(0, 0, "version: " + String(version)); // 版本号
+  
 //检查蓝牙连接状态
   if (deviceConnected)
   {
@@ -480,25 +497,9 @@ void loop() {
      updatecount++;
      display.drawString(0, 54, String(updatecount));
    }else{
-     display.drawString(0, 54, "false");
+     //display.drawString(0, 54, "false");
    }
-unsigned long currentTime = millis();
 
-  if (currentTime - lastMethod1Time >= 1000) {
-    Circle();
-    lastMethod1Time = currentTime;
-  }
-  // Execute method 2 every ten seconds
-  if (currentTime - lastMethod2Time >= 10000) {
-    if (archorDis){archorDistance();}
-    lastMethod2Time = currentTime;
-  }
-//  if (StartCount==1)
-//  {
-//   if(!latti.empty()&&!longgi.empty()){
-//     StartNav();
-//     }else{Serial.println("Navigation data is empty!");}
-//  }
 // //display.drawString(0, 18, String(delayTime)+"ms");
   // double m = latti.front();
   // double n = longgi.front();
@@ -513,11 +514,39 @@ unsigned long currentTime = millis();
  Input = FilteredDeg - courseTo;
  display.drawString(90, 54, String(distance_m));
  display.drawString(45, 54, String(courseTo));
-   if (deeg)
-  {
+//这里存储100个航向角和卡尔曼滤波后的航向角，可以一定程度观测GPS的平滑程度。
+//但是并没有写记录一段数据回来的代码。
+ unsigned long currentTime = millis();
+//每间隔一秒处理一次的任务
+   if (currentTime - lastMethod1Time >= 1000) {
+    Circle();//计算十个点的平均值
+    lastMethod1Time = currentTime;
+  }
+//每间隔两秒计算一次的函数：更新航向角
+  if (currentTime - lastMethod2Time >= 2000) {
     NowDeg.push(gps.course.deg());
+    if (NowDeg.size()>500)
+    {
+     NowDeg.pop();
+    }
     FilteredNowDeg.push(FilteredDeg);
-    deeg = false;
+    if(FilteredNowDeg.size()>100)
+    {
+     FilteredNowDeg.pop();
+    }
+    lastMethod2Time = currentTime;
+  }
+  
+ if (StartKey)
+ {
+  if(!latti.empty()&&!longgi.empty()){
+    StartNav();
+    }else{Serial.println("Navigation data is empty!");}
+ }
+  // 每隔十秒执行一次的函数：如果锚点模式开启，十秒计算一次
+  if (currentTime - lastMethod2Time >= 10000) {
+    if (anchorkey){AnchorDis();}
+    lastMethod3Time = currentTime;
   }
  display.display();
 }
