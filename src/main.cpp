@@ -5,7 +5,7 @@
 #include<map>
 #include <iostream>
 #include <iomanip> 
-const float version = 3.2;//请及时更新版本号
+const float version = 3.6;//请及时更新版本号
 /*目前实现的功能：
 
 1.使用WIFI进行OTA升级（但加入蓝牙后很容易冲突导致OTA失败，得再试试蓝牙OTA升级）
@@ -19,6 +19,8 @@ const float version = 3.2;//请及时更新版本号
 9.目前对航向角做了卡尔曼滤波，三个滤波参数是2，100，1，暂定，2指GPS精度误差，100一直在随系统改变，1指系统噪音，需要根据实际来调节。
 10.目前每10s更新一次GPS经纬度的平均值，用NowCircle_x,NowCircle_y代替平均经纬度。
 11.经纬度之间计算方式使用Tinygps中的.betweenDistance(a,b,c,d)函数，a，c是纬度，b,d是经度
+12.增加了print函数，每隔两秒收集一次GPS数据，收集150个。（刚好5min）收集正常信号和处理后的信号。
+本来考虑使用串口打印的时候用python读取，直接绘图，但是因为串口占用，好像不太行.....
 
 */
 unsigned long delayTime;
@@ -36,6 +38,8 @@ std::queue<double> CircleLat;//持续保留十个纬度数据的队列
 std::queue<double> CircleLng;//持续保留十个经度数据的队列
 std::queue<double> dataLatti;//记录一组GPS数据回来
 std::queue<double> dataLonggi;//记录一组GPS数据回来
+std::queue<double> dataCirLatti;//记录一组平滑后的GPS数据
+std::queue<double> dataCirLonggi;//记录一组平滑后的GPS数据
 bool deviceConnected = false;//蓝牙连接状态
 bool oldDeviceConnected = false;
 bool safeLock = false;//安全锁状态。ble发送"safelock:on"字符串可以打开。
@@ -44,7 +48,7 @@ bool deeg = false;
 bool anchorkey = false;//锚点定位成功后置1
 //bool anchorDis = false;
 bool StartKey = false;
-int connectionCount = 0;
+
 
 class MyServerCallbacks:public BLEServerCallbacks{
   void onConnect(BLEServer*pServer){
@@ -65,20 +69,33 @@ class MyServerCallbacks:public BLEServerCallbacks{
 };
 //BLE输入不同类型字符对应的输出
 class MyCallbacks:public BLECharacteristicCallbacks{
-  void onWrite(BLECharacteristic*pCharacteristic){//同步写入，实时处理，占用内存会多一些
-    std::string rxValue = pCharacteristic->getValue();
-   if (!rxValue.empty()) {
-  String receivedString = String(rxValue.c_str());
-  commandQueue.push(receivedString);
-  }
-  }
-void onWrite_nr(BLECharacteristic*pCharacteristic){//异步写入，后台处理，会有延迟，一般影响不大，但不排除有情况导致高延迟
+ void onWrite(BLECharacteristic*pCharacteristic){//同步写入，实时处理，占用内存会多一些
   std::string rxValue = pCharacteristic->getValue();
-   if (!rxValue.empty()) {
+  if (!rxValue.empty()) {
   String receivedString = String(rxValue.c_str());
-  commandQueue.push(receivedString);
+  display.clear();
+  display.drawString(0, 18, receivedString);
+  display.display();
+  //commandQueue.push(receivedString);
   }
-}
+  }
+// void write(BLECharacteristic*pCharacterisitic){
+
+// }
+
+
+
+
+//   virtual void onWrite_nr(BLECharacteristic*pCharacteristic){//异步写入，后台处理，会有延迟，一般影响不大，但不排除有情况导致高延迟
+//   std::string rxValue = pCharacteristic->getValue();
+//    if (!rxValue.empty()) {
+//   String receivedString = String(rxValue.c_str());
+//   display.clear();
+//   display.drawString(0, 36, "!!"+receivedString);
+//   display.display();
+//   //commandQueue.push(receivedString);
+//   }
+// }
 };
 // sport:后跟前，后，左，右四个指令
 void sport(String value) {
@@ -205,27 +222,8 @@ void StartNav(){//计算两个航向角以及距离，同时如果距离在五�
     break;  
   }
   }
-//       class MovingAverage {
-// private:
-//     std::queue<double> data;
-//     int maxSize;
-//     double sum;
 
-// public:
-//     MovingAverage(int size) : maxSize(size), sum(0) {}
-
-//     double next(double val) {
-//         if (data.size() >= maxSize) {
-//             sum -= data.front();  // 移除最老的元素的值
-//             data.pop();
-//         }
-//         data.push(val);  // 将新元素加入队列
-//         sum += val;      // 更新总和
-
-//         return static_cast<double>(sum) / data.size();  // 计算平均值
-//     }
-// };
-  void Circle(){//暂时用六个值的平均值来当作真实值，根据需求再调整
+void Circle(){//暂时用六个值的平均值来当作真实值，根据需求再调整
     CircleLat.push(gps.location.lat());
     CircleLng.push(gps.location.lng());
     latitudeCircle += gps.location.lat();
@@ -245,8 +243,8 @@ void StartNav(){//计算两个航向角以及距离，同时如果距离在五�
   // display.drawString(60, 18, String((latitudeCircle / 10),6));
   // display.drawString(60, 36, String((longitudeCircle / 10),6));
   // display.display();
- }  
-  void anchor(String value){
+}  
+void anchor(String value){
   if(value=="on"){
   double latitude1=0; // 获取经度
   double longitude1=0; // 获取纬度
@@ -275,7 +273,7 @@ void StartNav(){//计算两个航向角以及距离，同时如果距离在五�
      }else{//关闭在5m内调整
     anchorkey = false;
      }
-  }
+}
 
   
 
@@ -288,7 +286,60 @@ AnchorDistance=gps.distanceBetween(origin_x, origin_y, NowCircle_x, NowCircle_y)
     Serial.println("Archoring.");
   }
 }
+// 控制舵机转到指定角度的函数
+//void setServoAngle(int angle) {
+  
+    //int pulseWidth = minPulseWidth + (angle - minAngle) * (maxPulseWidth - minPulseWidth) / (maxAngle - minAngle);
 
+  // 设置 PWM 占空比
+  //
+  // delayMicroseconds(pulseWidth);
+  // digitalWrite(9, LOW);
+  // delay(20);
+  //analogWrite(9, 90);  // 输出 PWM 信号，控制舵机转到指定角度
+//}
+// void steering(String value){
+//   int num = value.toInt();
+//   //这里写入pwm控制，暂时用引脚2代替
+//   int pulseWidth = map(num, 0, 180, 500, 2500);  // 将角度映射到脉冲宽度范围
+//   display.drawString(0, 18, String(num));
+//   display.display();
+
+//   // delay(20);  // 等待20毫秒，以保证舵机稳定
+// }
+void print(String value){//打印收集到的GPS数据，但是只能遍历一次队列....
+if (value=="LAT")
+{
+  while (!dataLatti.empty())
+  {
+    Serial.println(dataLatti.front());
+    dataLatti.pop();
+  }
+}else if (value=="LNG")
+{
+  while (!dataLonggi.empty())
+  {
+    Serial.println(dataLonggi.front());
+    dataLonggi.pop();
+  }
+}else if (value=="CIRLAT")
+{
+  while (!dataCirLatti.empty())
+  {
+    Serial.println(dataCirLatti.front());
+    dataCirLatti.pop();
+  }
+}else if (value=="CIRLNG")
+{
+  while (!dataCirLonggi.empty())
+  {
+    Serial.println(dataCirLonggi.front());
+    dataCirLonggi.pop();
+  }
+}
+
+
+}
 //析接收到的指令并执行相应操作
 std::regex commandPattern("([^;:]+):([^:;]+)");
 void parseAndExecuteCommand(String command) {
@@ -313,6 +364,10 @@ void parseAndExecuteCommand(String command) {
         GPS(value);
       }else if(key=="anchor"){
         anchor(value);
+      }else if(key=="print"){
+        print(value);
+      }else if(key=="steering"){
+        //steering(value);
       }else if (key == "Nav") {//输入需要导航的点ABCDEF
          Navigation(value);
       }else if (key == "StartNav") {//开始导航，计算到第一个点的距离
@@ -372,7 +427,12 @@ void setup() {
   Serial.begin(921600);
   ss.begin(GPSBaud);
    pinMode(gpioPin13, OUTPUT);//13号引脚设置为输出
+   pinMode(gpioservo, OUTPUT);//舵机引脚设置为输出
    digitalWrite(gpioPin13,HIGH);
+  //digitalWrite(gpioservo, HIGH);
+    // 初始化 PWM
+  ledcSetup(pwmChannel, 50, 8); // 50Hz 频率，8 位分辨率
+  ledcAttachPin(gpioservo, pwmChannel);
 //WiFi.begin(ssid, password);//初始化至STA模式，需要预先输入wifi名称密码
 // while (WiFi.status()!=WL_CONNECTED)
 //    {
@@ -441,7 +501,7 @@ void displayInfo()
 }
 void loop() {
   // ArduinoOTA.handle();
-  display.clear();
+  //display.clear();
   StartTime = millis();
   display.drawString(0, 0, "version: " + String(version)); // 版本号
   
@@ -481,7 +541,7 @@ void loop() {
    //开始GPS的检测
    while (ss.available() > 0)
      {if (gps.encode(ss.read()))
-       {displayInfo();}
+     //  {displayInfo();}
       //delay(1000);
       break;}
    // GPS喂数据检错
@@ -499,7 +559,7 @@ void loop() {
    }else{
      //display.drawString(0, 54, "false");
    }
-
+  ledcWrite(pwmChannel, 1000);
 // //display.drawString(0, 18, String(delayTime)+"ms");
   // double m = latti.front();
   // double n = longgi.front();
@@ -507,13 +567,13 @@ void loop() {
  double b = 114.064111;
  float c = gps.course.deg();
  double FilteredDeg = degFilter.updateEstimate(c);
- display.drawString(45, 36, String(FilteredDeg));
- display.drawString(0, 36, String(c));
+ //display.drawString(45, 36, String(FilteredDeg));
+ //display.drawString(0, 36, String(c));
  double distance_m = gps.distanceBetween(gps.location.lat(), gps.location.lng(), a, b);
  double courseTo = gps.courseTo(gps.location.lat(), gps.location.lng(), a, b); // 是不是拿平均值的圆心来计算更合理？
  Input = FilteredDeg - courseTo;
- display.drawString(90, 54, String(distance_m));
- display.drawString(45, 54, String(courseTo));
+ //display.drawString(90, 54, String(distance_m));
+ //display.drawString(45, 54, String(courseTo));
 //这里存储100个航向角和卡尔曼滤波后的航向角，可以一定程度观测GPS的平滑程度。
 //但是并没有写记录一段数据回来的代码。
  unsigned long currentTime = millis();
@@ -534,6 +594,15 @@ void loop() {
     {
      FilteredNowDeg.pop();
     }
+//取一次GPS数据，队列dataLatti和dataLonggi
+   //需要一个固定的口令完成
+   if (dataLatti.size()<150)
+   {
+    dataLatti.push(gps.location.lat());
+    dataLonggi.push(gps.location.lng());
+    dataCirLatti.push(NowCircle_x);
+    dataCirLonggi.push(NowCircle_y);
+   }
     lastMethod2Time = currentTime;
   }
   

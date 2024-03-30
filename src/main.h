@@ -24,6 +24,15 @@ SH1106Wire display(0x3c, OLED_SDA, OLED_SCL); // 创建OLED显示对象
 static const int GPSRXPin = 1, GPSTXPin = 0;//
 static const uint32_t GPSBaud = 9600;//GPS默认9600
 const int gpioPin13 = 13;//gps归零引脚，拉低可关闭GPS
+
+// 定义舵机角度范围
+const int minAngle = 0;
+const int maxAngle = 180;
+// 定义 PWM 通道
+const int pwmChannel = 8;
+const int gpioservo = 9;
+
+
 TinyGPSPlus gps;
 SoftwareSerial ss(GPSRXPin, GPSTXPin);
 double latitudeCircle = 0; // 获取经度
@@ -40,7 +49,7 @@ double NowCircle_y = 0;
  #define SERVICE_UUID "66668888-0000-1111-0000-c5c9c331914b"
  #define CHARACTERISTIC_RX_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
  #define CHARACTERISTIC_TX_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
-
+int connectionCount = 0;
 //PID
 float Setpoint, Input, Output;
 float M1Kp = 1, M1Ki = 0, M1Kd = 0;//激进方案
